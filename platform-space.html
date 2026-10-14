@@ -315,6 +315,28 @@ h2{font-size:13px;font-weight:400;color:var(--mute);margin:22px 0 8px}
 .pr-shot svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.pr-shot img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.pr-shot input{display:none}
 .pr-act{margin-top:18px}.pr-act .btn.pri{padding:13px 16px}.pr-act .btn.pri:disabled{opacity:.45}
 .pr-note{text-align:center;font-size:12px;color:var(--mute);margin:10px 0 0}
+
+/* traffic chart (Overview): dark card, smooth area chart that keeps a fixed width per day and scrolls sideways as it grows */
+.tcard{background:#111413;color:#e8ece9;border-radius:22px;padding:14px 0 10px;margin-top:22px;border:1px solid #1d2220}
+.tc-head{display:flex;align-items:center;gap:10px;padding:0 14px}
+.tc-head b{flex:1;font-size:16px;font-weight:600}
+.tc-ic{width:26px;height:26px;border-radius:50%;border:1.6px solid #e8ece9;display:grid;place-items:center}
+.tc-ic svg,.tc-more svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.tc-more{width:36px;height:36px;border-radius:50%;border:0;background:#1b201e;color:#e8ece9;display:grid;place-items:center;cursor:pointer}
+.tc-more svg{fill:currentColor;stroke:none}
+.tc-leg{display:flex;gap:18px;padding:12px 16px 0;font-size:13px;color:#aeb5b0}
+.tc-leg i{display:inline-block;width:12px;height:12px;border-radius:4px;margin-right:7px;vertical-align:-1px}
+.tc-leg .g{background:#00cc88}.tc-leg .s{background:#9aa19c}
+.tc-scroll{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;margin-top:4px;overscroll-behavior-x:contain}
+.tc-scroll::-webkit-scrollbar{display:none}
+#trPlot{position:relative;min-height:200px}
+#trPlot svg{display:block}
+#trPlot .xl{fill:#8f9692;font-size:11px}#trPlot .xl.on{fill:#e8ece9;font-weight:600}
+.tc-tip{position:absolute;top:8px;display:grid;gap:7px;pointer-events:none;z-index:2}
+.tc-tip div{background:#1d2321;border-radius:10px;padding:7px 11px 7px 9px;font-size:12px;font-weight:600;white-space:nowrap;display:flex;align-items:center;gap:8px;box-shadow:0 4px 14px rgba(0,0,0,.35)}
+.tc-tip i{width:3px;height:14px;border-radius:2px}
+.tc-empty{position:absolute;inset:0;display:grid;place-items:center;padding:0 24px;text-align:center;font-size:13px;color:#8f9692}
+.tc-note{padding:4px 16px 4px;font-size:11.5px;color:#838a85;line-height:1.45}
 </style>
 </head>
 <body>
@@ -372,6 +394,12 @@ h2{font-size:13px;font-weight:400;color:var(--mute);margin:22px 0 8px}
     <div class="mini"><div><small>Clients' project worths</small><b id="pWorth"><span class="sk" style="width:64px;height:16px;border-radius:6px"></span></b></div><div><small>Total projects</small><b id="pCount"><span class="sk" style="width:34px;height:16px;border-radius:6px"></span></b></div></div>
     <div class="h2row"><h2>Recent activity</h2><button class="btn ghost" id="actAll" type="button">See all</button></div><div class="list" id="actList"></div>
     <h2>Revenue, last 7 days</h2><div class="chart" id="chart"></div><div class="days" id="days"></div>
+    <div class="tcard" id="trCard">
+      <div class="tc-head"><div class="tc-ic"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7"/></svg></div><b>Traffic</b><button class="tc-more" id="trMore" type="button" aria-label="Traffic details"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg></button></div>
+      <div class="tc-leg"><span><i class="g"></i>Visits</span><span><i class="s"></i>Signups</span></div>
+      <div class="tc-scroll" id="trScroll"><div id="trPlot"><div class="tc-empty">Loading…</div></div></div>
+      <p class="tc-note" id="trNote"></p>
+    </div>
     <div class="mini"><div><small>Clients</small><b id="nClients">—</b></div><div><small>Earners</small><b id="nEarners">—</b></div></div>
   </div>
       <div id="cashSk" aria-hidden="true"><div class="sk sk-h" style="width:118px;height:12px"></div>
@@ -867,6 +895,69 @@ function trafficView() {
     }
   };
 }
+/* traffic chart on Overview: one point per day from the saved history (ledger-ops "clarity-insights" with history) */
+const TC = { d: null, err: "", w: 0, sel: -1 };
+async function loadTrafficChart() {
+  try { TC.d = await callFunction(FUNCTIONS.LEDGER_OPS, { action: "clarity-insights", days: 1, history: true }); TC.err = ""; }
+  catch (e) { TC.err = /Unknown action/.test(e.message) ? "Traffic isn't in ledger-ops yet. Redeploy it to turn this on." : (e.message || "Could not load traffic"); }
+  drawTraffic(true);
+}
+// smooth line through the points without overshooting (monotone cubic)
+function smoothPath(pts) {
+  const n = pts.length; if (n < 2) return "";
+  const dx = [], m = [], t = [];
+  for (let i = 0; i < n - 1; i++) { dx[i] = pts[i + 1][0] - pts[i][0]; m[i] = (pts[i + 1][1] - pts[i][1]) / dx[i]; }
+  t[0] = m[0]; t[n - 1] = m[n - 2];
+  for (let i = 1; i < n - 1; i++) t[i] = m[i - 1] * m[i] <= 0 ? 0 : (m[i - 1] + m[i]) / 2;
+  for (let i = 0; i < n - 1; i++) {
+    if (m[i] === 0) { t[i] = t[i + 1] = 0; continue; }
+    const a = t[i] / m[i], b = t[i + 1] / m[i], s = a * a + b * b;
+    if (s > 9) { const k = 3 / Math.sqrt(s); t[i] = k * a * m[i]; t[i + 1] = k * b * m[i]; }
+  }
+  let d = "M" + pts[0][0].toFixed(1) + " " + pts[0][1].toFixed(1);
+  for (let i = 0; i < n - 1; i++) d += "C" + (pts[i][0] + dx[i] / 3).toFixed(1) + " " + (pts[i][1] + t[i] * dx[i] / 3).toFixed(1) + " " + (pts[i + 1][0] - dx[i] / 3).toFixed(1) + " " + (pts[i + 1][1] - t[i + 1] * dx[i] / 3).toFixed(1) + " " + pts[i + 1][0].toFixed(1) + " " + pts[i + 1][1].toFixed(1);
+  return d;
+}
+function drawTraffic(toEnd) {
+  const plot = $("trPlot"), sc = $("trScroll"), note = $("trNote"); if (!plot || !sc) return;
+  const STEP = 56, PADX = 30, TOP = 26, PH = 138, H = 196;
+  if (!TC.d) { plot.style.width = ""; plot.innerHTML = `<div class="tc-empty">${esc(TC.err || "Loading…")}</div>`; note.textContent = ""; return; }
+  const hist = (TC.d.history || []).map(r => ({ d: r[0], v: r[1], m: r[2] }));
+  const today = new Date().toISOString().slice(0, 10);
+  if (!hist.length || hist[hist.length - 1].d < today) hist.push({ d: today, v: TC.d.visits || 0, m: TC.d.newMembers || 0 }); // today's live numbers if the history isn't saved yet
+  const n = hist.length, cw = sc.clientWidth || 0, W = Math.max(cw, PADX * 2 + (n - 1) * STEP);
+  const xs = hist.map((_, i) => n === 1 ? W / 2 : PADX + i * STEP);
+  const vmax = Math.max(...hist.map(h => h.v), 1), mmax = Math.max(...hist.map(h => h.m), 1);
+  const yv = hist.map(h => TOP + (1 - h.v / vmax * 0.9) * PH), ym = hist.map(h => TOP + (1 - h.m / mmax * 0.9) * PH);
+  const pv = xs.map((x, i) => [x, yv[i]]), pm = xs.map((x, i) => [x, ym[i]]), base = TOP + PH;
+  const lv = smoothPath(pv), lm = smoothPath(pm);
+  const area = n > 1 ? lv + "L" + xs[n - 1].toFixed(1) + " " + base + "L" + xs[0].toFixed(1) + " " + base + "Z" : "";
+  const lab = hist.map((h, i) => `<text class="xl" data-i="${i}" x="${xs[i].toFixed(1)}" y="${H - 8}" text-anchor="middle">${esc(new Date(h.d + "T12:00:00Z").toLocaleDateString([], { day: "numeric", month: "short" }))}</text>`).join("");
+  plot.style.width = W + "px";
+  plot.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Visits and signups per day"><defs><linearGradient id="trg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#00cc88" stop-opacity=".34"/><stop offset="1" stop-color="#00cc88" stop-opacity="0"/></linearGradient></defs>` +
+    (area ? `<path d="${area}" fill="url(#trg)"/>` : "") +
+    (lm ? `<path d="${lm}" fill="none" stroke="#a3aaa5" stroke-width="1.8" stroke-dasharray="5 5" stroke-linecap="round" opacity=".85"/>` : "") +
+    (lv ? `<path d="${lv}" fill="none" stroke="#00cc88" stroke-width="2.4" stroke-linecap="round"/>` : "") +
+    `<g id="trSel"></g>${lab}</svg><div class="tc-tip" id="trTip" hidden></div>`;
+  const select = i => {
+    i = Math.max(0, Math.min(n - 1, i)); TC.sel = i; const x = xs[i], h = hist[i];
+    $("trSel").innerHTML = `<line x1="${x}" x2="${x}" y1="10" y2="${base}" stroke="#8f9692" stroke-width="1" stroke-dasharray="3 4" opacity=".7"/>` +
+      `<circle cx="${x}" cy="${ym[i]}" r="4.2" fill="#fff"/><circle cx="${x}" cy="${yv[i]}" r="4.6" fill="#00cc88" stroke="#111413" stroke-width="2"/>`;
+    plot.querySelectorAll(".xl").forEach(t => t.classList.toggle("on", +t.dataset.i === i));
+    const tip = $("trTip"); tip.hidden = false;
+    tip.innerHTML = `<div><i style="background:#00cc88"></i>${h.v.toLocaleString()} visits</div><div><i style="background:#a3aaa5"></i>${h.m.toLocaleString()} signups</div>`;
+    const tw = tip.offsetWidth || 116; tip.style.left = Math.max(4, Math.min(W - tw - 4, x + tw + 14 > W ? x - tw - 10 : x + 10)) + "px";
+  };
+  plot.onclick = e => { const r = plot.getBoundingClientRect(); select(Math.round((e.clientX - r.left - xs[0]) / STEP)); };
+  plot.onpointermove = e => { if (e.pointerType === "mouse") { const r = plot.getBoundingClientRect(); select(Math.round((e.clientX - r.left - xs[0]) / STEP)); } };
+  select(TC.sel >= 0 && TC.sel < n && !toEnd ? TC.sel : n - 1);
+  const was0 = TC.w === 0; TC.w = cw;
+  if (toEnd || was0) sc.scrollLeft = sc.scrollWidth; // newest day in view, older days stay behind to the left
+  note.textContent = (TC.err ? TC.err + " " : "") + (n === 1 ? "Your chart starts today and grows by one point a day. " : "") + (W > cw ? "Swipe sideways for earlier days. " : "") + "Each line is scaled to its own peak, tap a day for exact numbers.";
+  if (!TC.ro && "ResizeObserver" in window) { TC.ro = new ResizeObserver(() => { const w = sc.clientWidth; if (w && w !== TC.w) drawTraffic(false); }); TC.ro.observe(sc); }
+}
+$("trMore").addEventListener("click", () => { TR.d = null; TR.err = ""; TR.days = 1; Panel.open(trafficView()); });
+
 /* payouts (owner): switch between manual and automatic */
 const PO = { d: null, err: "", busy: false, banks: null };
 const COIN_I = '<svg viewBox="0 0 24 24"><rect x="2.500" y="6" width="19" height="12" rx="2.500"/><circle cx="12" cy="12" r="2.500"/><path d="M6 9.500v5M18 9.500v5"/></svg>';
@@ -1713,7 +1804,7 @@ async function load() {
   renderCash();
   setSync("busy", "Syncing"); const slow = setTimeout(() => { if ($("sync").classList.contains("busy")) setSync("busy", "Slow connection, still trying"); }, 12000);
   const ovDone = () => { $("ovSk").hidden = true; $("ovReal").hidden = false; };
-  const r = await Promise.allSettled([loadOverview().finally(ovDone), loadDeposits(), loadProjectTotals(), loadAttention(), loadInbox(), S.view === "database" ? loadDb(true) : 0, loadWithdrawn(), loadClientBal(), loadPromoCalc()]);
+  const r = await Promise.allSettled([loadOverview().finally(ovDone), loadDeposits(), loadProjectTotals(), loadAttention(), loadInbox(), S.view === "database" ? loadDb(true) : 0, loadWithdrawn(), loadClientBal(), loadPromoCalc(), loadTrafficChart()]);
   if (r[0].status === "rejected") $("actList").innerHTML = `<div class="empty">${esc(r[0].reason.message || "Could not load revenue.")}</div>`;
   if (r[0].status === "rejected" && S.fees === undefined) { S.fees = false; renderCash(); }
   if (r[0].status === "rejected") { $("total").textContent = "—"; $("delta").textContent = "—"; $("fProj").textContent = $("fWd").textContent = "—"; }
