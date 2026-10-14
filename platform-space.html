@@ -9,7 +9,6 @@
 <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
 <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
-<link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#05100c">
 <style>
 :root,:root[data-theme="dark"]{--bg:#161615;--card:#1b1b1a;--line:#2a2a28;--tile:#121211;--bar:#151514;--text:#e9e7df;--mute:#8b8981;--blue:#1c2530;--blue-text:#cfdcec;--pos:#7fb08f;--neg:#c98a84;--hero-line:rgba(207,220,236,.14);--delta-bg:rgba(127,176,143,.14);--spark:#7d9cc0;--warn:#d2a85c;--knob:#e9e7df;--track:#262624;--nav-bg:rgba(27,27,26,.88);color-scheme:dark}
@@ -824,6 +823,7 @@ const themeNow = () => document.documentElement.getAttribute("data-theme") === "
 /* reviews (owner) */
 const STAR_I = '<svg viewBox="0 0 24 24"><path d="M12 3l2.700 5.600 6.100.9-4.400 4.300 1 6.100L12 17l-5.400 2.900 1-6.100L3.200 9.500l6.100-.9z"/></svg>';
 const MSG_I = '<svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+const PUB_I = '<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>';
 const TRASH_I = '<svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5"/></svg>';
 const RV = { d: null, err: "", tab: "rev", write: null, busy: false };
 const stars5 = n => "★".repeat(n) + "☆".repeat(5 - n);
@@ -831,6 +831,41 @@ async function rvLoad() {
   try { RV.d = await callFunction(FUNCTIONS.LEDGER_OPS, { action: "list-reviews" }); RV.err = ""; }
   catch (e) { RV.err = /Unknown action/.test(e.message) ? "The reviews actions aren't in ledger-ops yet. Add them and redeploy." : (e.message || "Could not load reviews"); }
   Panel.refresh(); setTimeout(Panel.refresh, 450);
+}
+/* traffic (owner): visits from Microsoft Clarity via ledger-ops "clarity-insights" (cached; Clarity allows 10 requests a day) */
+const TR = { d: null, err: "", days: 1, busy: false };
+const TRAFFIC_I = '<svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>';
+async function trLoad(force) {
+  if (TR.busy) return; TR.busy = true;
+  try { TR.d = await callFunction(FUNCTIONS.LEDGER_OPS, { action: "clarity-insights", days: TR.days, force: !!force }); TR.err = ""; if (force && TR.d.limited) toast("Daily Clarity limit reached, showing saved numbers"); }
+  catch (e) { TR.err = /Unknown action/.test(e.message) ? "Traffic isn't in ledger-ops yet. Add it and redeploy." : (e.message || "Could not load traffic"); }
+  TR.busy = false; Panel.refresh(); setTimeout(Panel.refresh, 450);
+}
+function trafficView() {
+  return {
+    id: "traffic", title: "Traffic", sub: "Visits from Microsoft Clarity",
+    render(body) {
+      if (!TR.d) { body.innerHTML = TR.err ? `<p class="note err">${esc(TR.err)}</p><button class="btn ghost" data-tr="retry" type="button">Try again</button>` : '<div class="empty">Loading…</div>'; if (!TR.err && !TR.busy) trLoad(false); return; }
+      const d = TR.d, n = x => Number(x || 0).toLocaleString();
+      const rows = (arr, total) => (arr || []).map((r, i) => `<div class="row"><div class="ico" style="font-weight:700">${i + 1}</div><div class="t"><b>${esc(r.label)}</b><span>${total ? Math.round(r.sessions / total * 100) : 0}% of visits</span></div><div class="r"><b>${n(r.sessions)}</b></div></div>`).join("");
+      const sec = (title, arr) => arr && arr.length ? `<h2>${title}</h2><div class="list">${rows(arr, d.visits)}</div>` : "";
+      body.innerHTML =
+        `<div class="seg" style="margin:0 0 4px"><button type="button" data-tr="range" data-d="1" aria-pressed="${TR.days === 1}">Last 24 hours</button><button type="button" data-tr="range" data-d="3" aria-pressed="${TR.days === 3}">Last 3 days</button></div>` +
+        `<div class="mini"><div><small>Visits</small><b>${n(d.visits)}</b></div><div><small>New members</small><b>${n(d.newMembers)}</b></div></div>` +
+        `<div class="mini"><div><small>Signups per 100 visits</small><b>${d.signupRate == null ? "—" : d.signupRate}</b></div><div><small>Pages per visit</small><b>${d.pagesPerSession || "—"}</b></div></div>` +
+        sec("Where visitors came from", d.sources) + sec("Tagged links (?src=)", d.tags) + sec("Pages", d.pages) +
+        (!d.visits ? `<div class="list"><div class="empty">No visits recorded in this window yet.</div></div>` : "") +
+        `<p class="note">Updated ${esc(ago(d.at))}${d.limited ? " · Clarity's daily limit is reached, these are saved numbers" : ""}. Bots are left out${d.bots ? " (" + n(d.bots) + " filtered)" : ""}. Clarity data can lag a little, and one person can make several visits.</p>` +
+        `<button class="btn pri" data-tr="refresh" type="button" style="width:100%;margin-top:6px">Refresh now</button>` +
+        `<p class="note">Clarity allows 10 requests a day and each refresh uses 2. Used today: ${n(d.used)} of ${n(d.cap)}.</p>`;
+    },
+    async click(e) {
+      const b = e.target.closest("[data-tr]"); if (!b || TR.busy) return; const a = b.dataset.tr;
+      if (a === "retry") { TR.err = ""; Panel.refresh(); }
+      else if (a === "range") { const dd = Number(b.dataset.d); if (dd !== TR.days) { TR.days = dd; TR.d = null; TR.err = ""; Panel.refresh(); } }
+      else if (a === "refresh") { if (TR.d && TR.d.used + 2 > TR.d.cap) return toast("Clarity's daily limit is reached"); trLoad(true); }
+    }
+  };
 }
 /* payouts (owner): switch between manual and automatic */
 const PO = { d: null, err: "", busy: false, banks: null };
@@ -883,15 +918,17 @@ function reviewsView() {
       if (!RV.d) { body.innerHTML = RV.err ? `<p class="note err">${esc(RV.err)}</p><button class="btn ghost" data-rv="retry" type="button">Try again</button>` : '<div class="empty">Loading…</div>'; if (!RV.err) rvLoad(); return; }
       const st = RV.d.stats, rows = RV.tab === "rev" ? RV.d.reviews : RV.d.later, av = n => `<div class="ico" style="font-weight:700">${esc((n || "?").charAt(0).toUpperCase())}</div>`;
       const list = rows.map(r => {
-        const meta = RV.tab === "rev" ? `<span class="rv-meta"><span class="rv-stars">${stars5(r.stars)}</span><span>${esc(pretty(r.role || "member"))} · ${esc(ago(r.at))}</span></span>` : `<span class="rv-meta"><span>${esc(pretty(r.role || "member"))} · tapped remind me later ${esc(ago(r.at))}</span></span>`;
+        const live = RV.tab === "rev" && (RV.d.published || []).includes(r.id);
+        const meta = RV.tab === "rev" ? `<span class="rv-meta"><span class="rv-stars">${stars5(r.stars)}</span><span>${esc(pretty(r.role || "member"))} · ${esc(ago(r.at))}</span>${live ? '<span class="pill t-good">On intro page</span>' : ""}</span>` : `<span class="rv-meta"><span>${esc(pretty(r.role || "member"))} · tapped remind me later ${esc(ago(r.at))}</span></span>`;
         const txt = RV.tab === "rev" ? `${r.tags.length ? `<span class="rv-tags">${r.tags.map(t => `<span class="rv-tag">${esc(t)}</span>`).join("")}</span>` : ""}${r.note ? `<p class="rv-note">${esc(r.note)}</p>` : ""}` : "";
-        const acts = RV.tab === "rev" ? `<div style="display:flex;gap:6px"><button class="pen" data-rv="write" data-id="${esc(r.id)}" type="button" aria-label="Write to ${esc(r.name)}">${MSG_I}</button><button class="pen" data-rv="del" data-id="${esc(r.id)}" type="button" aria-label="Delete review by ${esc(r.name)}">${TRASH_I}</button></div>` : "";
+        const acts = RV.tab === "rev" ? `<div style="display:flex;gap:6px"><button class="pen${live ? ' done' : ''}" data-rv="pub" data-id="${esc(r.id)}" type="button" aria-label="${live ? 'Remove from intro page' : 'Publish on intro page'}: ${esc(r.name)}">${PUB_I}</button><button class="pen" data-rv="write" data-id="${esc(r.id)}" type="button" aria-label="Write to ${esc(r.name)}">${MSG_I}</button><button class="pen" data-rv="del" data-id="${esc(r.id)}" type="button" aria-label="Delete review by ${esc(r.name)}">${TRASH_I}</button></div>` : "";
         const box = RV.write === r.id ? `<div style="padding:0 0 12px"><textarea class="field" id="rvMsg" rows="3" maxlength="400" placeholder="Write back to ${esc(r.name)}" aria-label="Message"></textarea><div style="display:flex;gap:8px;margin-top:8px"><button class="btn pri" data-rv="sendw" data-id="${esc(r.id)}" type="button">Send notification</button><button class="btn ghost" data-rv="cancelw" type="button">Cancel</button></div></div>` : "";
         return `<div class="row rv">${av(r.name)}<div class="t"><b>${esc(r.name)}</b><span>${meta}</span>${txt}</div><div class="r">${acts}</div></div>${box}`;
       }).join("");
       body.innerHTML =
         `<div class="mini"><div><small>Average</small><b>${st.reviewed ? st.avg.toFixed(1) + " ★" : "—"}</b></div><div><small>Reviewed</small><b>${st.reviewed}</b></div></div>` +
         `<div class="mini"><div><small>Remind later</small><b>${st.later}</b></div><div><small>No response</small><b>${st.noReply}</b></div></div>` +
+        (RV.d.publishReady === false ? `<p class="note">Publish is not set up yet. Create the public_reviews collection and redeploy ledger-ops (see PUBLISH_SETUP.md).</p>` : "") +
         `<button class="btn pri" data-rv="all" type="button" style="width:100%;margin-top:14px">Send rating modal to all members</button>` +
         `<div class="seg" id="rvTabs" style="margin:14px 0 4px"><button type="button" data-rv="tab" data-t="rev" aria-pressed="${RV.tab === "rev"}">Reviews</button><button type="button" data-rv="tab" data-t="later" aria-pressed="${RV.tab === "later"}">Remind later</button></div>` +
         `<div class="list">${list || `<div class="empty">${RV.tab === "rev" ? "No reviews yet." : "Nobody has tapped remind me later."}</div>`}</div>`;
@@ -909,6 +946,18 @@ function reviewsView() {
         try { await callFunction(FUNCTIONS.LEDGER_OPS, { action: "announce-user", userId: r.id, kind: "dn", title: "About your review", message: msg.trim() }); RV.write = null; toast("Notification sent"); }
         catch (err) { toast(err.message || "Could not send"); }
         RV.busy = false; Panel.refresh();
+      }
+      else if (a === "pub" && r) {
+        const live = (RV.d.published || []).includes(r.id);
+        if (RV.d.publishReady === false) return toast("Create the public_reviews collection first");
+        if (!live && !String(r.note || "").trim()) return toast("Only reviews with a written remark can be published");
+        if (!await Modal.confirm({ tone: live ? "warn" : "info", title: live ? "Remove from intro page?" : "Publish on intro page?",
+          text: live ? "It disappears from the public page. You can publish it again any time." : "Anyone visiting the intro page will see this remark with the member's first name and last initial.",
+          ...(r.note ? { quote: r.note } : {}), confirm: live ? "Remove" : "Publish", cancel: "Cancel" })) return;
+        RV.busy = true;
+        try { await callFunction(FUNCTIONS.LEDGER_OPS, { action: live ? "unpublish-review" : "publish-review", userId: r.id }); toast(live ? "Removed from intro page" : "Published on intro page"); await rvLoad(); }
+        catch (err) { toast(/Unknown action/.test(err.message) ? "Redeploy ledger-ops first" : /could not be found|not found/i.test(err.message) ? "Create the public_reviews collection first" : (err.message || "Could not update")); }
+        RV.busy = false;
       }
       else if (a === "del" && r) {
         if (!await Modal.confirm({ tone: "bad", title: "Delete this review?", text: `${r.name} rated ${r.stars} of 5. It can't be undone, but they can review again.`, confirm: "Delete", cancel: "Keep" })) return;
@@ -985,6 +1034,7 @@ function profileView() {
         (acct ? `<h2>Account</h2><div class="rec">${acct}</div>` : "") +
         `<h2>Payouts</h2><div class="list"><button class="row tap" data-act="payouts" type="button"><div class="ico">${COIN_I}</div><div class="t"><b>Payout mode</b><span>Switch between manual and automatic</span></div>${CHEV}</button></div>` +
         `<h2>Reviews</h2><div class="list"><button class="row tap" data-act="reviews" type="button"><div class="ico">${STAR_I}</div><div class="t"><b>Platform reviews</b><span>Ratings, notes and who to ask</span></div>${CHEV}</button></div>` +
+        `<h2>Traffic</h2><div class="list"><button class="row tap" data-act="traffic" type="button"><div class="ico">${TRAFFIC_I}</div><div class="t"><b>Site traffic</b><span>Visits, sources and signup rate</span></div>${CHEV}</button></div>` +
         `<h2>Preferences</h2><div class="list">` +
         `<button class="row tap" data-act="theme" type="button"><div class="ico">${th === "light" ? SUN : MOON}</div><div class="t"><b>Appearance</b><span>${th === "light" ? "Light" : "Dark"} · tap to switch</span></div>${CHEV}</button>` +
         `<button class="row tap" data-act="auto" type="button"><div class="ico"><svg viewBox="0 0 24 24"><path d="M5 12.500a10 10 0 0 1 14 0M8.500 16a5 5 0 0 1 7 0M12 20v.01"/></svg></div><div class="t"><b>Offline retry</b><span>${prefAuto() ? "Retries by itself when you're back online" : "Waits for you to tap Try again"}</span></div><div class="r"><b>${prefAuto() ? "On" : "Off"}</b></div></button>` +
@@ -1000,6 +1050,7 @@ function profileView() {
       else if (b.dataset.act === "calc") { PM.open = true; Panel.open(promoCalcView()); loadPromoCalc(); }
       else if (b.dataset.act === "payouts") { PO.d = null; PO.err = ""; Panel.open(payoutView()); }
       else if (b.dataset.act === "reviews") { RV.d = null; RV.err = ""; RV.tab = "rev"; Panel.open(reviewsView()); }
+      else if (b.dataset.act === "traffic") { TR.d = null; TR.err = ""; TR.days = 1; Panel.open(trafficView()); }
       else if (b.dataset.act === "theme") { $("theme").click(); Panel.refresh(); }
       else if (b.dataset.act === "sync") { $("sync").click(); toast("Refreshing"); }
       else if (b.dataset.act === "auto") { try { localStorage.setItem("ps-autoretry", prefAuto() ? "0" : "1"); } catch {} Panel.refresh(); }

@@ -24,7 +24,6 @@
 <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
 <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
-<link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#05100c">
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"BoostGrid","url":"https://boostgrid.github.io/"}</script>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&family=Unbounded:wght@600;700&display=swap" rel="stylesheet">
@@ -214,18 +213,28 @@ footer{ padding:40px 20px 48px; text-align:center; font-size:13px; color:var(--t
   .nav-actions .btn-outline{ display:none; }
 }
 @media (prefers-reduced-motion:reduce){ html{ scroll-behavior:auto; } .td-step.done{ animation:none; } #siteHeader,.mobile-menu,.mobile-menu > *{ transition:none !important; } }
-/* install app */
-.install-box{ grid-column:1; margin-top:-8px; }
-.install-btn{ width:100%; display:flex; align-items:center; justify-content:center; gap:10px; border:1.5px solid var(--brand);
-  border-radius:var(--radius-sm); padding:16px 24px; cursor:pointer; font-family:'Space Grotesk',sans-serif; font-size:16px; font-weight:700;
-  color:var(--brand-deep); background:var(--surface); transition:transform .3s var(--spring); }
-body.dark .install-btn{ color:var(--brand); }
-.install-btn:active{ transform:scale(.97); }
-.install-btn svg{ width:20px; height:20px; flex:none; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
-.install-hint{ margin:10px 2px 0; font-size:14px; line-height:1.5; color:var(--text-dim); }
-.install-hint b{ color:var(--text); }
-@media (max-width:640px){ .install-box{ grid-column:1; } }
+
+/* public reviews: published from the Space (Reviews -> Publish); hidden until at least one is live */
+#reviews[hidden]{ display:none; }
+.rv-sum{ display:flex; align-items:center; gap:10px; margin:0 0 28px; font-weight:600; }
+.rv-sum .rv-avg{ font-family:'Unbounded',system-ui,sans-serif; font-size:28px; letter-spacing:-.02em; }
+.rv-sum span{ color:var(--text-dim); font-size:14px; font-weight:500; }
+.rv-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:18px; }
+.rv-card{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); padding:22px; display:flex; flex-direction:column; gap:12px; }
+.rv-stars{ display:flex; gap:3px; }
+.rv-stars i{ width:18px; height:18px; background:var(--border-strong); clip-path:polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%); }
+.rv-stars i.on{ background:linear-gradient(150deg,#fff2a8 0%,#ffc933 45%,#ff9a16 100%); }
+.rv-note{ margin:0; font-size:15px; line-height:1.6; }
+.rv-who{ margin-top:auto; font-size:13.5px; color:var(--text-dim); }
+.rv-who b{ color:var(--text); font-weight:600; }
 </style>
+<script type="text/javascript">
+    (function(c,l,a,r,i,t,y){
+        c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+        t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+        y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+    })(window, document, "clarity", "script", "yxjl58u91v");
+</script>
 </head>
 <body>
 
@@ -267,10 +276,6 @@ body.dark .install-btn{ color:var(--brand); }
     <div class="hero-ctas">
       <button class="role-btn primary" onclick="goToSignup('earner')">Start Earning</button>
       <button class="role-btn secondary" onclick="goToSignup('client')">Grow My Account</button>
-    </div>
-    <div class="install-box" id="installBox" hidden>
-      <button class="install-btn" id="installBtn" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 19h16"/></svg>Install the BoostGrid app</button>
-      <p class="install-hint" id="installHint" hidden></p>
     </div>
 
     <div class="task-demo" aria-hidden="true">
@@ -394,6 +399,17 @@ body.dark .install-btn{ color:var(--brand); }
   </div>
 </section>
 
+<section class="alt" id="reviews" hidden>
+  <div class="wrap">
+    <div class="section-head">
+      <h2>What members say</h2>
+      <p>Real feedback from earners and clients using BoostGrid.</p>
+    </div>
+    <div class="rv-sum" id="rvSummary" hidden></div>
+    <div class="rv-grid" id="rvGrid"></div>
+  </div>
+</section>
+
 <section id="get-started">
   <div class="wrap">
     <div class="get-started">
@@ -429,6 +445,45 @@ body.dark .install-btn{ color:var(--brand); }
   </div>
   &copy; 2026 Cenova Global. All Rights Reserved. BoostGrid is a product of Cenova Global.
 </footer>
+
+<script type="module">
+  /* public reviews: the ones you publish from your Space (collection public_reviews, readable by anyone).
+     Everything is inserted as text, never HTML. If the collection is missing or the call fails the section stays hidden */
+  import { databases, DATABASE_ID, Query } from "./lib/appwrite-config.js";
+  const COL = "public_reviews";
+  function starRow(n) {
+    const d = document.createElement("div"); d.className = "rv-stars"; d.setAttribute("role", "img"); d.setAttribute("aria-label", n + " out of 5 stars");
+    for (let i = 1; i <= 5; i++) { const s = document.createElement("i"); if (i <= n) s.className = "on"; d.appendChild(s); }
+    return d;
+  }
+  try {
+    const [list, stats] = await Promise.all([
+      databases.listDocuments(DATABASE_ID, COL, [Query.orderDesc("$updatedAt"), Query.limit(7)]),
+      databases.getDocument(DATABASE_ID, COL, "stats").catch(() => null)
+    ]);
+    const rows = list.documents.filter(d => d.$id !== "stats" && d.note).slice(0, 6);
+    if (rows.length) {
+      const grid = document.getElementById("rvGrid");
+      rows.forEach(r => {
+        const card = document.createElement("div"); card.className = "rv-card";
+        card.appendChild(starRow(Math.max(1, Math.min(5, Math.round(Number(r.stars) || 0)))));
+        const p = document.createElement("p"); p.className = "rv-note"; p.textContent = "\u201C" + String(r.note).slice(0, 300) + "\u201D"; card.appendChild(p);
+        const who = document.createElement("div"); who.className = "rv-who";
+        const b = document.createElement("b"); b.textContent = String(r.name || "Member").slice(0, 40); who.appendChild(b);
+        if (r.role === "client" || r.role === "earner") who.appendChild(document.createTextNode(" \u00B7 " + (r.role === "client" ? "Client" : "Earner")));
+        card.appendChild(who); grid.appendChild(card);
+      });
+      const count = stats ? Number(stats.count) || 0 : 0, avg = stats ? Number(stats.avg) || 0 : 0;
+      if (count >= 3 && avg > 0) {
+        const sum = document.getElementById("rvSummary");
+        const a = document.createElement("div"); a.className = "rv-avg"; a.textContent = avg.toFixed(1);
+        const t = document.createElement("span"); t.textContent = "average from " + count + " member ratings";
+        sum.appendChild(a); sum.appendChild(starRow(Math.round(avg))); sum.appendChild(t); sum.hidden = false;
+      }
+      document.getElementById("reviews").hidden = false;
+    }
+  } catch (e) { /* section stays hidden */ }
+</script>
 
 <script>
   function goToSignup(role) {
@@ -475,29 +530,6 @@ body.dark .install-btn{ color:var(--brand); }
     }
     lastScroll = current;
   });
-</script>
-<script>
-// Install the app: one wide button. Chrome/Edge/Samsung give a real install prompt; iPhone and in-app browsers
-// (Facebook, Instagram, WhatsApp...) cannot, so the button shows the exact steps instead.
-(function(){
-  var box=document.getElementById('installBox'), btn=document.getElementById('installBtn'), hint=document.getElementById('installHint'), dp=null;
-  var ua=navigator.userAgent||'';
-  var standalone=(window.matchMedia&&matchMedia('(display-mode: standalone)').matches)||navigator.standalone===true;
-  if(standalone) return;                                   // already installed and opened as the app
-  var ios=/iPad|iPhone|iPod/.test(ua)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-  var inApp=/FBAN|FBAV|Instagram|WhatsApp|Line\/|Snapchat|TikTok|Twitter|MicroMessenger|; wv\)/i.test(ua);
-  box.hidden=false;
-  window.addEventListener('beforeinstallprompt',function(e){ e.preventDefault(); dp=e; });
-  window.addEventListener('appinstalled',function(){ dp=null; box.hidden=true; });
-  function say(t){ hint.innerHTML=t; hint.hidden=false; }
-  btn.addEventListener('click',function(){
-    if(dp){ var p=dp; dp=null; p.prompt(); p.userChoice.then(function(c){ if(c&&c.outcome==='accepted') box.hidden=true; else say('No problem. You can install it any time from this button.'); }).catch(function(){}); return; }
-    if(ios) return say('On iPhone: tap the <b>Share</b> button in Safari, then <b>Add to Home Screen</b>.');
-    if(inApp) return say('This browser cannot install apps. Open this page in <b>Chrome</b> (menu, then <b>Open in browser</b>), then tap this button again.');
-    say('Tap the browser menu <b>&#8942;</b> and choose <b>Install app</b> (or <b>Add to Home screen</b>, then <b>Install</b>).');
-  });
-  if('serviceWorker' in navigator&&window.isSecureContext) navigator.serviceWorker.register('sw.js').catch(function(){});
-})();
 </script>
 </body>
 </html>
